@@ -54,7 +54,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--base", default="http://127.0.0.1:8000")
     p.add_argument("--admin-password", required=True)
-    p.add_argument("--new-admin-password", default="Admin-Demo-456")
+    p.add_argument("--new-admin-password", help="optional: rotate the admin password after login")
     args = p.parse_args()
     api = f"{args.base}/api/v1"
 
@@ -62,10 +62,12 @@ def main() -> None:
         r = c.post(f"{api}/auth/login", json={"username": settings.admin_bootstrap_username, "password": args.admin_password})
         r.raise_for_status()
         token = r.json()["access_token"]
-        r = c.post(f"{api}/auth/change-password", headers={"Authorization": f"Bearer {token}"},
-                   json={"current_password": args.admin_password, "new_password": args.new_admin_password})
-        r.raise_for_status()
-        h = {"Authorization": f"Bearer {r.json()['access_token']}"}
+        if args.new_admin_password:
+            r = c.post(f"{api}/auth/change-password", headers={"Authorization": f"Bearer {token}"},
+                       json={"current_password": args.admin_password, "new_password": args.new_admin_password})
+            r.raise_for_status()
+            token = r.json()["access_token"]
+        h = {"Authorization": f"Bearer {token}"}
 
         branch_ids = []
         for b in BRANCHES:

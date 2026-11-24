@@ -153,7 +153,7 @@ npm run dev          # http://localhost:5173
 npm run build        # خروجی نهایی در dist/
 ```
 
-ورود با یوزرنیم `admin` و رمزی که در `ADMIN_BOOTSTRAP_PASSWORD` گذاشته‌اید. رمز نمونه در `scripts/seed_demo.py` تعریف شده است؛ پیش از انتشار حتماً آن را عوض کنید.
+ورود با یوزرنیم `admin` و رمزی که در `ADMIN_BOOTSTRAP_PASSWORD` گذاشته‌اید. پیش از انتشار حتماً رمز پیش‌فرض را عوض کنید.
 
 ---
 
