@@ -1,0 +1,59 @@
+# ---------- Secrets & environment ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.keystore
+*.jks
+*.p12
+scripts/tunnel.env
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+
+# ---------- Node ----------
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- Build output ----------
+admin/dist/
+pwa/dist/
+dist/
+.tools/
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+
+# ---------- Test artifacts ----------
+pwa/e2e/*.png
+
+# ---------- Logs ----------
+*.log
+logs/
+
+# ---------- OS / editors ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.iml
+
+# ---------- Local tooling ----------
+.freebuff/
