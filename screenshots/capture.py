@@ -3,14 +3,15 @@
 Run after the API (port 8000) and Vite dev server (port 5173) are up.
 """
 
+import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-BASE = "http://127.0.0.1:5173"
+BASE = os.environ.get("ADMIN_BASE_URL", "http://127.0.0.1:5173")
 OUT = Path(__file__).resolve().parent
-ADMIN_USER = "admin"
-ADMIN_PASSWORD = "Admin-Demo-456"
+ADMIN_USER = os.environ.get("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]
 
 
 def main() -> None:
