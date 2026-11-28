@@ -10,8 +10,10 @@ from app.db import get_db
 from app.deps import get_admin_user
 from app.models import (
     ROLE_EMPLOYEE,
+    STATUS_APPROVED,
     AttendanceRecord,
     Branch,
+    HourlyLeaveRequest,
     LateCheckoutRequest,
     LeaveRequest,
     User,
@@ -19,19 +21,29 @@ from app.models import (
 )
 from app.schemas import (
     AttendanceAdminUpdate,
+    AttendanceManualIn,
     AttendanceOut,
     BranchIn,
     BranchOut,
     BranchUpdate,
+    DecisionLeaveIn,
     EmployeeCreate,
     EmployeeUpdate,
+    HourlyLeaveIn,
+    HourlyLeaveOut,
     ResetPasswordIn,
     UserOut,
     attendance_out,
     user_out,
 )
 from app.security import hash_password
-from app.services.attendance import admin_update_record
+from app.services.attendance import (
+    admin_manual_record,
+    admin_update_record,
+    hourly_leave_hours_for_record,
+)
+from app.services.leave import create_hourly_leave, decide_hourly_leave, list_hourly_leaves
+from app.services.schedule import get_schedule
 from app.timeutil import local_date, utcnow
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(get_admin_user)])
@@ -223,8 +235,30 @@ def list_attendance(
         q = q.where(AttendanceRecord.user_id == user_id)
     if branch_id:
         q = q.where(AttendanceRecord.branch_id == branch_id)
-    records = db.scalars(q.limit(limit).offset(offset))
-    return [attendance_out(r) for r in records]
+    records = list(db.scalars(q.limit(limit).offset(offset)))
+    sched = get_schedule(db)
+    grouped: dict[tuple[int, date], list] = {}
+    if records:
+        days = [r.work_date for r in records]
+        leaves = db.scalars(
+            select(HourlyLeaveRequest).where(
+                HourlyLeaveRequest.user_id.in_({r.user_id for r in records}),
+                HourlyLeaveRequest.status == STATUS_APPROVED,
+                HourlyLeaveRequest.date >= min(days),
+                HourlyLeaveRequest.date <= max(days),
+            )
+        )
+        for leave in leaves:
+            grouped.setdefault((leave.user_id, leave.date), []).append(leave)
+    return [
+        attendance_out(
+            r,
+            sched,
+            hourly_leave_hours_for_record(r, grouped.get((r.user_id, r.work_date), [])),
+            grouped.get((r.user_id, r.work_date), []),
+        )
+        for r in records
+    ]
 
 
 @router.patch("/attendance/{record_id}", response_model=AttendanceOut)
@@ -241,7 +275,7 @@ def update_attendance(
         check_in_at=body.check_in_at,
         check_out_at=body.check_out_at,
     )
-    return attendance_out(rec)
+    return attendance_out(rec, get_schedule(db))
 
 
 @router.delete("/attendance/{record_id}", status_code=204, response_class=Response)
@@ -253,6 +287,64 @@ def delete_attendance(record_id: int, db: Session = Depends(get_db)) -> Response
     db.delete(rec)
     db.commit()
     return Response(status_code=204)
+
+
+# ---------- manual attendance (admin records check-in/check-out for an employee) ----------
+
+@router.post("/attendance/manual", response_model=AttendanceOut)
+def admin_manual_attendance(
+    body: AttendanceManualIn, db: Session = Depends(get_db)
+) -> AttendanceOut:
+    """Admin registers (or updates) an employee's check-in and optional check-out."""
+    rec = admin_manual_record(
+        db,
+        user_id=body.user_id,
+        branch_id=body.branch_id,
+        work_date=body.work_date,
+        check_in=body.check_in,
+        check_out=body.check_out,
+        work_description=body.work_description,
+    )
+    return attendance_out(rec, get_schedule(db))
+
+
+# ---------- hourly leaves ----------
+
+@router.post("/hourly-leaves", response_model=HourlyLeaveOut, status_code=201)
+def create_hourly_leave_request(
+    body: HourlyLeaveIn, db: Session = Depends(get_db)
+) -> HourlyLeaveOut:
+    """The manager files an hourly leave on behalf of an employee."""
+    if body.user_id is None:
+        raise HTTPException(status_code=422, detail="user_id is required")
+    return create_hourly_leave(
+        db,
+        user_id=body.user_id,
+        day=body.date,
+        start_hour=body.start_hour,
+        end_hour=body.end_hour,
+        reason=body.reason,
+    )
+
+
+@router.get("/hourly-leaves", response_model=list[HourlyLeaveOut])
+def list_hourly_leave_requests(
+    user_id: int | None = Query(default=None),
+    date: date | None = Query(default=None),
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[HourlyLeaveOut]:
+    return list_hourly_leaves(db, user_id, date, status)
+
+
+@router.patch("/hourly-leaves/{leave_id}", response_model=HourlyLeaveOut)
+def decide_hourly_leave_request(
+    leave_id: int,
+    body: DecisionLeaveIn,
+    admin: User = Depends(get_admin_user),
+    db: Session = Depends(get_db),
+) -> HourlyLeaveOut:
+    return decide_hourly_leave(db, admin, leave_id, body.decision, body.note)
 
 
 # ---------- dashboard ----------
@@ -301,6 +393,13 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
             AttendanceRecord.approval_status == "rejected",
         )
     ) or 0
+    from app.models import HourlyLeaveRequest
+
+    pending_hourly = db.scalar(
+        select(func.count()).select_from(HourlyLeaveRequest).where(
+            HourlyLeaveRequest.status == STATUS_PENDING
+        )
+    ) or 0
     return {
         "date": today.isoformat(),
         "active_employees": active,
@@ -311,4 +410,5 @@ def dashboard(db: Session = Depends(get_db)) -> dict:
         "open_check_ins": open_now,
         "pending_leaves": pending_leaves,
         "pending_late_checkouts": pending_late,
+        "pending_hourly_leaves": pending_hourly,
     }

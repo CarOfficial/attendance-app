@@ -4,11 +4,13 @@
 #   2. opens TCP 8000 in Windows Firewall
 #   3. registers a startup task that boots the service with Windows
 # ---------------------------------------------------------------------------
+param(
+    [string]$Ip = '192.168.1.10',
+    [string]$IfAlias = 'Ethernet 2',
+    [string]$Mask = '255.255.255.0',
+    [string]$Gw = '192.168.1.1'
+)
 $Root = 'C:\Users\HP\Documents\attendance-app'
-$IfAlias = 'Wi-Fi'
-$Ip = '192.168.1.13'
-$Mask = '255.255.255.0'
-$Gw = '192.168.1.1'
 
 function Step($t) { Write-Host ""; Write-Host "=== $t ===" -ForegroundColor Cyan }
 

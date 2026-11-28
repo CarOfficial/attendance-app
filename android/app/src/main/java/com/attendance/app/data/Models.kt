@@ -34,6 +34,10 @@ data class AttendanceRecord(
     val approval_status: String = "none", // none | approved | rejected
     val approval_note: String? = null,
     val hours_worked: Double? = null,
+    val late_minutes: Int = 0,
+    val overtime_minutes: Int = 0,
+    val check_in_edited: Boolean = false,
+    val check_out_edited: Boolean = false,
 )
 
 data class TodayOut(
@@ -57,6 +61,45 @@ data class DayStateOut(
     val pending_leave: Boolean = false,
     val is_late: Boolean = false,
     val left_early: Boolean = false,
+    val hourly_leave_hours: Double = 0.0,
+    val late_minutes: Int = 0,
+    val overtime_minutes: Int = 0,
+    val absence_reason: String? = null,
+)
+
+/** GET /attendance/summary totals for one employee. */
+data class SummaryTotalsOut(
+    val present: Int = 0,
+    val absent: Int = 0,
+    val leave: Int = 0,
+    val pending_checkout: Int = 0,
+    val non_working: Int = 0,
+    val future: Int = 0,
+    val total_hours: Double = 0.0,
+    val late_count: Int = 0,
+    val early_leave_count: Int = 0,
+    val late_minutes: Int = 0,
+    val overtime_minutes: Int = 0,
+)
+
+data class SummaryOut(
+    val user_id: Int,
+    val user_full_name: String,
+    val from_date: String,
+    val to_date: String,
+    val days: List<DayStateOut> = emptyList(),
+    val totals: SummaryTotalsOut = SummaryTotalsOut(),
+)
+
+/** POST /attendance/absence-reason */
+data class AbsenceReasonBody(val date: String, val reason: String)
+
+data class AbsenceReasonOut(
+    val id: Int,
+    val user_id: Int,
+    val date: String,
+    val reason: String,
+    val created_at: String? = null,
 )
 
 data class ScheduleOut(
@@ -107,6 +150,41 @@ data class LeaveOut(
     val decision_note: String? = null,
 )
 
+/** Hourly leave (a few hours off on one day). */
+data class HourlyLeaveOut(
+    val id: Int,
+    val user_id: Int,
+    val user_full_name: String,
+    val date: String,
+    val start_hour: Double,
+    val end_hour: Double,
+    val reason: String,
+    val status: String = "pending", // pending | approved | rejected
+    val created_at: String? = null,
+    val decided_at: String? = null,
+    val decided_by: Int? = null,
+    val decision_note: String? = null,
+)
+
+data class HourlyLeaveBody(
+    val date: String,
+    val start_hour: Double,
+    val end_hour: Double,
+    val reason: String,
+    // Only the admin sets this; the employee endpoint always uses the signed-in user.
+    val user_id: Int? = null,
+)
+
+/** Admin records an employee's check-in (and optional check-out) without GPS. */
+data class ManualAttendanceBody(
+    val user_id: Int,
+    val branch_id: Int,
+    val work_date: String? = null,
+    val check_in: String,
+    val check_out: String? = null,
+    val work_description: String? = null,
+)
+
 /** Admin dashboard numbers (contract §4). */
 data class DashboardOut(
     val date: String,
@@ -118,6 +196,7 @@ data class DashboardOut(
     val open_check_ins: Int = 0,
     val pending_leaves: Int = 0,
     val pending_late_checkouts: Int = 0,
+    val pending_hourly_leaves: Int = 0,
 )
 
 /** Response of PATCH admin/attendance/{id}/decision (contract §4). */

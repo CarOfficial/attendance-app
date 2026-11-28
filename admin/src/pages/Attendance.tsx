@@ -2,8 +2,9 @@ import { useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, decideAttendance } from "../api";
 import { Alert, Badge, Button, Card, ConfirmDialog, DecisionDialog, Empty, Field, Input, Select, Table } from "../components/ui";
 import { JalaliDateField } from "../components/JalaliDateField";
-import { addDaysIso, formatHours, formatJalaliDate, formatTime, todayIso } from "../jalali";
+import { addDaysIso, formatHours, formatJalaliDate, formatMinutes, formatTime, todayIso } from "../jalali";
 import { APPROVAL_STATUS } from "../status";
+import { ManualAttendanceDialog } from "../components/ManualAttendanceDialog";
 import type { AttendanceRow, Branch, DecisionIn, Employee } from "../types";
 
 /** Splits an ISO datetime into Tehran wall-clock date ("YYYY-MM-DD") and time ("HH:MM"). */
@@ -17,6 +18,13 @@ function isoToTehranParts(iso: string | null): { date: string; time: string } {
 function tehranPartsToIso(date: string, time: string): string | null {
   if (!date) return null;
   return `${date}T${time || "00:00"}:00+03:30`;
+}
+
+/** Amber highlight for a check-in/check-out the manager recorded or changed manually. */
+function manualTimeCls(edited: boolean): string {
+  return edited
+    ? "rounded-lg bg-amber-100 px-2 py-1 font-semibold text-amber-900 ring-1 ring-inset ring-amber-200"
+    : "";
 }
 
 export function AttendancePage() {
@@ -35,6 +43,7 @@ export function AttendancePage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
 
   useEffect(() => {
     api<Employee[]>("/admin/employees").then(setEmployees).catch(() => {});
@@ -76,11 +85,14 @@ export function AttendancePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-royal-gradient">حضور و غیاب</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          از {formatJalaliDate(from)} تا {formatJalaliDate(to)}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-royal-gradient">حضور و غیاب</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            از {formatJalaliDate(from)} تا {formatJalaliDate(to)}
+          </p>
+        </div>
+        <Button onClick={() => setShowManual(true)}>ثبت دستی ورود/خروج</Button>
       </div>
 
       <Card>
@@ -112,7 +124,11 @@ export function AttendancePage() {
         {rows && rows.length === 0 ? (
           <Empty>رکوردی در این بازه یافت نشد.</Empty>
         ) : (
-          <Table head={["تاریخ", "کارمند", "دفتر", "ورود", "خروج", "ساعت کاری", "شرح کار", "وضعیت", "وضعیت تایید", "عملیات"]}>
+          <>
+            <p className="mb-3 text-xs text-amber-700">
+              سلول نارنجی یعنی آن ورود یا خروج به‌صورت دستی توسط مدیر ثبت یا اصلاح شده است.
+            </p>
+          <Table head={["تاریخ", "کارمند", "دفتر", "ورود", "خروج", "ساعت کاری", "تاخیر", "اضافه‌کاری", "شرح کار", "وضعیت تایید", "عملیات"]}>
             {(rows ?? []).map((r) => {
               const ap = APPROVAL_STATUS[r.approval_status];
               return (
@@ -122,18 +138,46 @@ export function AttendancePage() {
                     {r.user_full_name}
                   </td>
                   <td className="px-4 py-3 text-slate-600">{r.branch_name}</td>
-                  <td className="px-4 py-3 tabular-nums">{formatTime(r.check_in_at)}</td>
-                  <td className="px-4 py-3 tabular-nums">{formatTime(r.check_out_at)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                    <span
+                      className={manualTimeCls(r.check_in_edited)}
+                      title={r.check_in_edited ? "ورود ثبت‌شده توسط مدیر" : undefined}
+                    >
+                      {formatTime(r.check_in_at)}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                    <span
+                      className={manualTimeCls(r.check_out_edited)}
+                      title={r.check_out_edited ? "خروج ثبت‌شده توسط مدیر" : undefined}
+                    >
+                      {formatTime(r.check_out_at)}
+                    </span>
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3 tabular-nums font-medium text-slate-800">
                     {formatHours(r.hours_worked)}
+                    {r.hourly_leave_hours > 0 && (
+                      <span className="block text-[11px] font-normal text-amber-700">
+                        {formatHours(r.hourly_leave_hours)} مرخصی ساعتی
+                      </span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                    {r.late_minutes > 0 ? (
+                      <Badge tone="rose">{formatMinutes(r.late_minutes)}</Badge>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 tabular-nums">
+                    {r.overtime_minutes > 0 ? (
+                      <Badge tone="green">{formatMinutes(r.overtime_minutes)}</Badge>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="max-w-44 px-4 py-3 text-slate-600" title={r.work_description ?? undefined}>
                     <span className="line-clamp-2">{r.work_description || "—"}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {r.edited_by_admin ? <Badge tone="amber">ویرایش دستی</Badge>
-                      : r.check_out_at ? <Badge tone="slate">کامل</Badge>
-                      : <Badge tone="green">باز</Badge>}
                   </td>
                   <td className="px-4 py-3">
                     <Badge tone={ap.tone}>{ap.label}</Badge>
@@ -185,6 +229,7 @@ export function AttendancePage() {
               );
             })}
           </Table>
+          </>
         )}
       </Card>
 
@@ -208,6 +253,17 @@ export function AttendancePage() {
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
+            load();
+          }}
+        />
+      )}
+
+      {showManual && (
+        <ManualAttendanceDialog
+          onClose={() => setShowManual(false)}
+          onSaved={() => {
+            setShowManual(false);
+            setNotice("حضور دستی با موفقیت ثبت شد.");
             load();
           }}
         />

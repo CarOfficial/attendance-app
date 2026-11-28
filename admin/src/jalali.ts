@@ -98,8 +98,21 @@ export function toFa(v: number | string): string {
   return String(v).replace(/\d/g, (n) => "۰۱۲۳۴۵۶۷۸۹"[Number(n)]);
 }
 
-/** 10.25 -> "۱۰٫۳ ساعت" (Persian digits and decimal separator). */
+/** 9.5 -> "۹:۳۰" (hours and minutes, never a decimal fraction). */
 export function formatHours(value: number | null): string {
   if (value === null || Number.isNaN(value)) return "—";
-  return `${toFa(value.toFixed(1)).replace(".", "٫")} ساعت`;
+  const total = Math.round(value * 60);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${toFa(h)}:${toFa(String(m).padStart(2, "0"))}`;
+}
+
+/** 130 -> "۲ ساعت و ۱۰ دقیقه" (used for lateness and overtime columns). */
+export function formatMinutes(minutes: number | null): string {
+  if (minutes === null || Number.isNaN(minutes) || minutes <= 0) return "—";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${toFa(m)} دقیقه`;
+  if (m === 0) return `${toFa(h)} ساعت`;
+  return `${toFa(h)} ساعت و ${toFa(m)} دقیقه`;
 }

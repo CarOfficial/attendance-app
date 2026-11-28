@@ -35,6 +35,7 @@ import com.attendance.app.ui.screens.AdminScreen
 import com.attendance.app.ui.screens.ChangePasswordScreen
 import com.attendance.app.ui.screens.HomeScreen
 import com.attendance.app.ui.screens.LoginScreen
+import com.attendance.app.ui.screens.ReportsScreen
 import com.attendance.app.ui.screens.RequestsScreen
 import com.attendance.app.ui.screens.WeekScreen
 import com.attendance.app.ui.theme.Palette
@@ -76,7 +77,7 @@ private fun MainShell(state: UiState, vm: AppViewModel) {
     val tabs = if (isAdmin) {
         listOf("حضور" to 0, "هفته" to 1, "درخواست‌ها" to 2, "مدیریت" to 3)
     } else {
-        listOf("حضور" to 0, "هفته" to 1, "درخواست‌ها" to 2)
+        listOf("حضور" to 0, "هفته" to 1, "درخواست‌ها" to 2, "گزارش من" to 3)
     }
 
     // Load whatever the selected tab shows; the ViewModel keeps it in one state object.
@@ -85,9 +86,10 @@ private fun MainShell(state: UiState, vm: AppViewModel) {
             1 -> vm.loadWeek()
             2 -> {
                 vm.loadMyLeaves()
+                vm.loadMyHourlyLeaves()
                 vm.loadMyLateCheckouts()
             }
-            3 -> vm.loadAdmin(0)
+            3 -> if (isAdmin) vm.loadAdmin(0)
         }
     }
 
@@ -127,21 +129,26 @@ private fun MainShell(state: UiState, vm: AppViewModel) {
                     )
                     2 -> RequestsScreen(
                         leaves = state.leaves,
+                        hourlyLeaves = state.hourlyLeaves,
                         lateCheckouts = state.lateCheckouts,
                         fixReady = state.fix != null,
                         busy = state.busy,
                         notice = state.notice,
                         noticeIsError = state.noticeIsError,
                         onSubmitLeave = { start, end, reason -> vm.submitLeave(start, end, reason) },
+                        onSubmitHourlyLeave = { date, from, to, reason ->
+                            vm.submitHourlyLeave(date, from, to, reason)
+                        },
                         onFetchLocation = { vm.fetchLocation() },
                         onSubmitLateCheckout = { date, time, description ->
                             vm.submitLateCheckout(date, time, description)
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
-                    else -> AdminScreen(
+                    else -> if (isAdmin) AdminScreen(
                         dashboard = state.adminDashboard,
                         leaves = state.adminLeaves,
+                        hourlyLeaves = state.adminHourlyLeaves,
                         lateCheckouts = state.adminLateCheckouts,
                         records = state.adminAttendance,
                         branches = state.adminBranches,
@@ -157,6 +164,12 @@ private fun MainShell(state: UiState, vm: AppViewModel) {
                         onDecideAttendance = { id, decision ->
                             vm.adminDecideAttendance(id, decision, null)
                         },
+                        onDecideHourlyLeave = { id, decision ->
+                            vm.adminDecideHourlyLeave(id, decision, null)
+                        },
+                        onManualAttendance = { userId, branchId, date, checkIn, checkOut, description ->
+                            vm.adminManualAttendance(userId, branchId, date, checkIn, checkOut, description)
+                        },
                         onCreateBranch = { name, address, lat, lng, radius ->
                             vm.adminCreateBranch(name, address, lat, lng, radius)
                         },
@@ -166,6 +179,12 @@ private fun MainShell(state: UiState, vm: AppViewModel) {
                         },
                         onSetEmployeeActive = { id, active -> vm.adminSetEmployeeActive(id, active) },
                         onDeleteEmployee = { id -> vm.adminDeleteEmployee(id) },
+                        modifier = Modifier.fillMaxSize(),
+                    ) else ReportsScreen(
+                        summary = state.summary,
+                        busy = state.busy,
+                        onLoad = { from, to -> vm.loadSummary(from, to) },
+                        onSubmitAbsenceReason = { date, reason -> vm.submitAbsenceReason(date, reason) },
                         modifier = Modifier.fillMaxSize(),
                     )
                 }

@@ -93,6 +93,8 @@ class AttendanceRecord(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     edited_by_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Which sides the manager recorded/changed: "in", "out" or "in,out".
+    admin_edited_fields: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     branch: Mapped[Branch] = relationship(lazy="joined")
     user: Mapped[User] = relationship(lazy="joined", foreign_keys=[user_id])
@@ -168,3 +170,37 @@ class WorkSchedule(Base):
     end_time: Mapped[str] = mapped_column(String(5), default="17:00")  # HH:MM
     late_grace_minutes: Mapped[int] = mapped_column(Integer, default=15)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class HourlyLeaveRequest(Base):
+    """Hourly leave request for a specific date range (start_hour to end_hour)."""
+    __tablename__ = "hourly_leaves"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    start_hour: Mapped[float] = mapped_column(Float)
+    end_hour: Mapped[float] = mapped_column(Float)
+    reason: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | approved | rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    decision_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    user: Mapped[User] = relationship(lazy="joined", foreign_keys=[user_id])
+
+
+class AbsenceReason(Base):
+    """The employee explains why they were absent on a working day."""
+
+    __tablename__ = "absence_reasons"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_absence_user_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)
+    reason: Mapped[str] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(lazy="joined", foreign_keys=[user_id])

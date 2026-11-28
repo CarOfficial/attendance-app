@@ -8,9 +8,11 @@ import com.attendance.app.data.AttendanceRecord
 import com.attendance.app.data.BranchOut
 import com.attendance.app.data.DashboardOut
 import com.attendance.app.data.EmployeeOut
+import com.attendance.app.data.HourlyLeaveOut
 import com.attendance.app.data.LateCheckoutOut
 import com.attendance.app.data.LeaveOut
 import com.attendance.app.data.Me
+import com.attendance.app.data.SummaryOut
 import com.attendance.app.data.TodayOut
 import com.attendance.app.data.WeekOut
 import com.attendance.app.data.normalizeBaseUrl
@@ -33,8 +35,12 @@ data class UiState(
     val today: TodayOut? = null,
     val history: List<AttendanceRecord> = emptyList(),
     val week: WeekOut? = null,
+    /** Monthly report for the employee (attendance summary screen). */
+    val summary: SummaryOut? = null,
     val leaves: List<LeaveOut> = emptyList(),
+    val hourlyLeaves: List<HourlyLeaveOut> = emptyList(),
     val lateCheckouts: List<LateCheckoutOut> = emptyList(),
+    val adminHourlyLeaves: List<HourlyLeaveOut> = emptyList(),
     val adminDashboard: DashboardOut? = null,
     val adminLeaves: List<LeaveOut> = emptyList(),
     val adminLateCheckouts: List<LateCheckoutOut> = emptyList(),
@@ -153,6 +159,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _state.update { it.copy(week = week) }
     }
 
+    // ---- Monthly report / absence reasons ----
+
+    fun loadSummary(
+        fromDate: String = DateFmt.jalaliMonthStart(DateFmt.todayIso()),
+        toDate: String = DateFmt.todayIso(),
+    ) = loadDataQuiet {
+        val summary = repo.mySummary(fromDate, toDate)
+        _state.update { it.copy(summary = summary) }
+    }
+
+    /** The employee explains why they were absent on one day. */
+    fun submitAbsenceReason(date: String, reason: String) = launchBusy {
+        repo.submitAbsenceReason(date, reason.trim())
+        val current = _state.value.summary
+        val from = current?.from_date ?: DateFmt.jalaliMonthStart(DateFmt.todayIso())
+        val to = current?.to_date ?: DateFmt.todayIso()
+        val summary = repo.mySummary(from, to)
+        _state.update { it.copy(summary = summary) }
+        notify("علت غیاب ثبت شد", error = false)
+    }
+
     // ---- Leaves (contract §3) ----
 
     fun loadMyLeaves() = loadDataQuiet {
@@ -165,6 +192,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val leaves = repo.myLeaves()
         _state.update { it.copy(leaves = leaves) }
         notify("درخواست مرخصی ثبت شد و در انتظار تایید مدیر است", error = false)
+    }
+
+    // ---- Hourly leave ----
+
+    fun loadMyHourlyLeaves() = loadDataQuiet {
+        val list = repo.myHourlyLeaves()
+        _state.update { it.copy(hourlyLeaves = list) }
+    }
+
+    fun submitHourlyLeave(date: String, startHour: Double, endHour: Double, reason: String) = launchBusy {
+        repo.createHourlyLeave(date, startHour, endHour, reason.trim())
+        val list = repo.myHourlyLeaves()
+        _state.update { it.copy(hourlyLeaves = list) }
+        notify("درخواست مرخصی ساعتی ثبت شد و در انتظار تایید مدیر است", error = false)
     }
 
     // ---- Forgotten check-out (contract §2) ----
@@ -220,9 +261,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val branches = repo.adminBranches()
                 _state.update { it.copy(adminBranches = branches) }
             }
-            else -> {
+            5 -> {
                 val employees = repo.adminEmployees()
                 _state.update { it.copy(adminEmployees = employees) }
+            }
+            else -> {
+                val list = repo.adminHourlyLeaves(status = "pending", limit = 100)
+                _state.update { it.copy(adminHourlyLeaves = list) }
             }
         }
     }
@@ -273,6 +318,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val leaves = repo.adminLeaves(status = "pending", limit = 100)
         _state.update { it.copy(adminLeaves = leaves) }
         notify(if (decision == "approve") "مرخصی تایید شد" else "مرخصی رد شد", error = false)
+    }
+
+    fun adminDecideHourlyLeave(id: Int, decision: String, note: String?) = launchBusy {
+        repo.decideHourlyLeave(id, decision, note)
+        val list = repo.adminHourlyLeaves(status = "pending", limit = 100)
+        _state.update { it.copy(adminHourlyLeaves = list) }
+        notify(if (decision == "approve") "مرخصی ساعتی تایید شد" else "مرخصی ساعتی رد شد", error = false)
+    }
+
+    /** Admin records an employee's check-in/check-out manually (no GPS needed). */
+    fun adminManualAttendance(
+        userId: Int,
+        branchId: Int,
+        workDate: String,
+        checkIn: String,
+        checkOut: String?,
+        description: String?,
+    ) = launchBusy {
+        repo.adminManualAttendance(userId, branchId, workDate, checkIn, checkOut, description)
+        val list = repo.adminAttendance(limit = 50)
+        _state.update { it.copy(adminAttendance = list) }
+        notify("حضور دستی ثبت شد", error = false)
     }
 
     fun adminDecideLateCheckout(id: Int, decision: String, note: String?) = launchBusy {

@@ -103,7 +103,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--map", type=int, metavar="PORT")
     ap.add_argument("--unmap", type=int, metavar="PORT")
-    ap.add_argument("--internal-ip", default="192.168.1.13")
+    ap.add_argument("--internal-ip", default="192.168.1.10")
     args = ap.parse_args()
 
     locs = ssdp_discover()

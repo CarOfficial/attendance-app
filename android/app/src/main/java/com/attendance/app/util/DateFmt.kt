@@ -68,6 +68,38 @@ object DateFmt {
     /** Yesterday in Tehran, "yyyy-MM-dd". */
     fun yesterdayIso(): String = LocalDate.now(tehran).minusDays(1).toString()
 
+    /** First day of the Jalali month that contains isoDate, as "yyyy-MM-dd". */
+    fun jalaliMonthStart(isoDate: String): String {
+        val d = LocalDate.parse(isoDate)
+        val (jy, jm, _) = gregorianToJalali(d.year, d.monthValue, d.dayOfMonth)
+        val (gy, gm, gd) = jalaliToGregorian(jy, jm, 1)
+        return "%04d-%02d-%02d".format(gy, gm, gd)
+    }
+
+    /** First day of the Jalali month shifted by delta months. */
+    fun shiftJalaliMonth(isoDate: String, delta: Int): String {
+        val d = LocalDate.parse(jalaliMonthStart(isoDate))
+        val (jy, jm, _) = gregorianToJalali(d.year, d.monthValue, d.dayOfMonth)
+        val total = jy * 12 + (jm - 1) + delta
+        val nj = total / 12
+        val nm = total % 12 + 1
+        val (gy, gm, gd) = jalaliToGregorian(nj, nm, 1)
+        return "%04d-%02d-%02d".format(gy, gm, gd)
+    }
+
+    /** Last day of the Jalali month that starts at isoDate. */
+    fun jalaliMonthEnd(isoDate: String): String =
+        LocalDate.parse(shiftJalaliMonth(isoDate, 1)).minusDays(1).toString()
+
+    /** "مهر ۱۴۰۵" for a date inside that Jalali month. */
+    fun monthTitle(isoDate: String): String = monthName(isoDate) + " " + fa(
+        gregorianToJalali(
+            LocalDate.parse(isoDate).year,
+            LocalDate.parse(isoDate).monthValue,
+            LocalDate.parse(isoDate).dayOfMonth,
+        ).first.toString(),
+    )
+
     /** Persian name of the weekday: شنبه … جمعه. */
     fun dayName(isoDate: String): String = when (LocalDate.parse(isoDate).dayOfWeek) {
         DayOfWeek.SATURDAY -> "شنبه"

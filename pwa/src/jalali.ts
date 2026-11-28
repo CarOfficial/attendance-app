@@ -20,6 +20,32 @@ export function jalaliMonthName(isoDate: string): string {
   return FA_MONTHS[jalaali.toJalaali(gy, gm, gd).jm - 1];
 }
 
+/** Jalali y/m/d -> Gregorian "YYYY-MM-DD". */
+export function jalaliToIso(jy: number, jm: number, jd: number): string {
+  const { gy, gm, gd } = jalaali.toGregorian(jy, jm, jd);
+  return `${String(gy).padStart(4, "0")}-${String(gm).padStart(2, "0")}-${String(gd).padStart(2, "0")}`;
+}
+
+/**
+ * Accepts a typed Jalali date ("۱۴۰۵/۰۸/۱۰", "1405/8/10" or "1405-08-10") and returns
+ * Gregorian "YYYY-MM-DD", or null when the text is not a real Jalali date.
+ */
+export function parseJalaliDate(text: string): string | null {
+  const ascii = String(text).replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+  const parts = ascii.trim().replace(/[-.]/g, "/").split("/").filter((p) => p !== "");
+  if (parts.length !== 3) return null;
+  const [jy, jm, jd] = parts.map(Number);
+  if (![jy, jm, jd].every(Number.isInteger)) return null;
+  if (jy < 1200 || jy > 1600 || jm < 1 || jm > 12 || jd < 1 || jd > 31) return null;
+  if (!jalaali.isValidJalaaliDate(jy, jm, jd)) return null;
+  return jalaliToIso(jy, jm, jd);
+}
+
+/** Today in Tehran as Jalali text, e.g. "۱۴۰۵/۰۸/۱۰". */
+export function todayJalali(): string {
+  return formatJalaliDate(todayIso());
+}
+
 /** ISO datetime (UTC from API) -> "HH:MM" in Tehran time */
 export function formatTime(iso: string | null): string {
   if (!iso) return "—";

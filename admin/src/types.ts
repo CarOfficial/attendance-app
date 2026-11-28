@@ -68,6 +68,11 @@ export interface AttendanceRow {
   approval_status: ApprovalStatus;
   approval_note: string | null;
   hours_worked: number | null;
+  late_minutes: number;
+  overtime_minutes: number;
+  hourly_leave_hours: number;
+  check_in_edited: boolean;
+  check_out_edited: boolean;
 }
 
 /** خروجی سرور برای هر رکورد حضور و غیاب */
@@ -83,6 +88,7 @@ export interface Dashboard {
   open_check_ins: number;
   pending_leaves: number;
   pending_late_checkouts: number;
+  pending_hourly_leaves: number;
 }
 
 export interface TokenOut {
@@ -101,6 +107,21 @@ export interface LeaveOut {
   status: LeaveStatus;
   created_at: string;
   decided_at: string | null;
+  decision_note: string | null;
+}
+
+export interface HourlyLeaveOut {
+  id: number;
+  user_id: number;
+  user_full_name: string;
+  date: string;
+  start_hour: number;
+  end_hour: number;
+  reason: string;
+  status: LeaveStatus;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: number | null;
   decision_note: string | null;
 }
 
@@ -145,6 +166,10 @@ export interface DayStateOut {
   pending_leave: boolean;
   is_late: boolean;
   left_early: boolean;
+  hourly_leave_hours: number;
+  late_minutes: number;
+  overtime_minutes: number;
+  absence_reason: string | null;
 }
 
 export interface WeekOut {
@@ -164,6 +189,8 @@ export interface SummaryTotals {
   total_hours: number;
   late_count: number;
   early_leave_count: number;
+  late_minutes: number;
+  overtime_minutes: number;
 }
 
 export interface SummaryOut {

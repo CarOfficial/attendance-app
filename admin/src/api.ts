@@ -1,6 +1,7 @@
 import type {
   AttendanceOut,
   DecisionIn,
+  HourlyLeaveOut,
   LateCheckoutOut,
   LeaveOut,
   ScheduleOut,
@@ -80,6 +81,17 @@ function qs(params: Record<string, string | number | undefined>): string {
 export const decideLeave = (id: number, body: DecisionIn) =>
   api<LeaveOut>(`/admin/leaves/${id}`, { method: "PATCH", body });
 
+export const createHourlyLeave = (body: {
+  user_id: number;
+  date: string;
+  start_hour: number;
+  end_hour: number;
+  reason: string;
+}) => api<HourlyLeaveOut>("/admin/hourly-leaves", { method: "POST", body });
+
+export const decideHourlyLeave = (id: number, body: DecisionIn) =>
+  api<HourlyLeaveOut>(`/admin/hourly-leaves/${id}`, { method: "PATCH", body });
+
 export const decideLateCheckout = (id: number, body: DecisionIn) =>
   api<LateCheckoutOut>(`/admin/late-checkouts/${id}`, { method: "PATCH", body });
 
@@ -88,6 +100,15 @@ export const decideAttendance = (id: number, body: DecisionIn) =>
     `/admin/attendance/${id}/decision`,
     { method: "PATCH", body },
   );
+
+export const manualAttendance = (body: {
+  user_id: number;
+  branch_id: number;
+  work_date?: string;
+  check_in: string;
+  check_out?: string | null;
+  work_description?: string | null;
+}) => api<AttendanceOut>("/admin/attendance/manual", { method: "POST", body });
 
 export const getSchedule = () => api<ScheduleOut>("/admin/schedule");
 

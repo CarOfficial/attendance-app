@@ -112,6 +112,10 @@ export function SchedulePage() {
                   </label>
                 ))}
               </div>
+              <p className="text-xs leading-6 text-slate-500">
+                روزهایی که تیک نمی‌خورند «غیرکاری» هستند؛ اگر کارمندی در یکی از آن روزها ورود و خروج ثبت
+                کند، تمام ساعت حضورش به‌عنوان اضافه‌کاری حساب می‌شود.
+              </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">

@@ -16,6 +16,7 @@ NEW_COLUMNS: dict[str, dict[str, str]] = {
         "approval_note": "VARCHAR(255)",
         "approval_by": "INTEGER",
         "approved_at": "TIMESTAMP",
+        "admin_edited_fields": "VARCHAR(20)",
     },
 }
 

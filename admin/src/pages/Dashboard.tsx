@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api";
-import { Alert, Badge, Card, Empty, Stat, Table } from "../components/ui";
+import { ManualAttendanceDialog } from "../components/ManualAttendanceDialog";
+import { Alert, Badge, Button, Card, Empty, Stat, Table } from "../components/ui";
 import { formatJalaliDate, formatTime, todayIso } from "../jalali";
 import type { AttendanceRow, Dashboard } from "../types";
 
@@ -9,8 +10,10 @@ export function DashboardPage() {
   const [stats, setStats] = useState<Dashboard | null>(null);
   const [rows, setRows] = useState<AttendanceRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     const today = todayIso();
     Promise.all([
       api<Dashboard>("/admin/dashboard"),
@@ -21,7 +24,9 @@ export function DashboardPage() {
         setRows(r);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "خطا در دریافت اطلاعات"));
-  }, []);
+  };
+
+  useEffect(load, []);
 
   if (error) return <Alert>{error}</Alert>;
 
@@ -41,9 +46,12 @@ export function DashboardPage() {
         <Stat label="در محل (ورود بدون خروج)" value={stats?.open_check_ins ?? "—"} tone="amber" />
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <Link to="/leaves" className="block transition hover:opacity-90" title="رفتن به صفحه مرخصی‌ها">
           <Stat label="مرخصی در انتظار" value={stats?.pending_leaves ?? "—"} tone="amber" />
+        </Link>
+        <Link to="/hourly-leaves" className="block transition hover:opacity-90" title="مرخصی‌های ساعتی در انتظار">
+          <Stat label="مرخصی ساعتی در انتظار" value={stats?.pending_hourly_leaves ?? "—"} tone="amber" />
         </Link>
         <Link to="/late-checkouts" className="block transition hover:opacity-90" title="رفتن به صفحه خروج فراموش‌شده">
           <Stat label="خروج فراموش‌شده در انتظار" value={stats?.pending_late_checkouts ?? "—"} tone="indigo" />
@@ -55,6 +63,17 @@ export function DashboardPage() {
           <Stat label="رد شده امروز" value={stats?.rejected_today ?? "—"} tone="rose" />
         </Link>
       </div>
+
+      {notice && <Alert tone="success">{notice}</Alert>}
+
+      <Card title="ثبت دستی ورود / خروج">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-600">
+            ثبت حضور کارمند توسط مدیر، بدون نیاز به GPS و موقعیت مکانی (ورود و خروج دستی).
+          </p>
+          <Button onClick={() => setShowManual(true)}>ثبت دستی ورود/خروج</Button>
+        </div>
+      </Card>
 
       <Card title="ثبت‌های امروز">
         {rows.length === 0 ? (
@@ -75,6 +94,17 @@ export function DashboardPage() {
           </Table>
         )}
       </Card>
+
+      {showManual && (
+        <ManualAttendanceDialog
+          onClose={() => setShowManual(false)}
+          onSaved={() => {
+            setShowManual(false);
+            setNotice("حضور دستی با موفقیت ثبت شد.");
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }

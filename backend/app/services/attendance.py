@@ -11,12 +11,15 @@ from app.models import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
+    AbsenceReason,
     AttendanceRecord,
     Branch,
+    HourlyLeaveRequest,
     LateCheckoutRequest,
     LeaveRequest,
     User,
 )
+from app.schemas import AttendanceOut
 from app.services.leave import approved_leaves_between
 from app.services.schedule import get_schedule, is_work_day
 from app.timeutil import (
@@ -59,6 +62,13 @@ def _open_record(db: Session, user: User) -> AttendanceRecord | None:
         .where(AttendanceRecord.user_id == user.id, AttendanceRecord.check_out_at.is_(None))
         .order_by(AttendanceRecord.check_in_at.desc())
     )
+
+
+def _mark_admin_edited(rec: AttendanceRecord, *fields: str) -> None:
+    """Remembers exactly which sides of the record the manager changed."""
+    current = {f for f in (rec.admin_edited_fields or "").split(",") if f}
+    current.update(fields)
+    rec.admin_edited_fields = ",".join(sorted(current))
 
 
 def _location_branch(db: Session, user: User, lat: float, lng: float) -> tuple[Branch, float]:
@@ -389,6 +399,8 @@ def _day_state(
     late_req: LateCheckoutRequest | None,
     leave: LeaveRequest | None,
     pending_leave: bool,
+    hourly_leaves: list,
+    absence_reason: str | None,
     today: date,
 ) -> dict:
     is_work = is_work_day(sched, d)
@@ -396,6 +408,9 @@ def _day_state(
     hours = None
     is_late = False
     left_early = False
+    hourly_hours = 0.0
+    late_minutes = 0
+    overtime_minutes = 0
 
     if record is not None:
         ci = as_utc(record.check_in_at)
@@ -403,11 +418,19 @@ def _day_state(
         if co is not None:
             hours = round((co - ci).total_seconds() / 3600, 2)
             co_local = co.astimezone(local_tz())
+            # An approved hourly leave during the day reduces the worked hours.
+            ci_local_h = ci.astimezone(local_tz())
+            ci_hour = ci_local_h.hour + ci_local_h.minute / 60
+            co_hour = co_local.hour + co_local.minute / 60
+            for item in hourly_leaves:
+                overlap = max(0.0, min(item.end_hour, co_hour) - max(item.start_hour, ci_hour))
+                hourly_hours += overlap
+            if hourly_hours:
+                hours = round(max(0.0, hours - hourly_hours), 2)
             if co_local < at_local(d, sched.end_time):
                 left_early = True
-        ci_local = ci.astimezone(local_tz())
-        late_after = at_local(d, sched.start_time) + timedelta(minutes=sched.late_grace_minutes)
-        is_late = is_work and ci_local > late_after
+        late_minutes, overtime_minutes = record_metrics(record, sched, hourly_leaves)
+        is_late = late_minutes > 0
 
         if record.approval_status == STATUS_REJECTED:
             status = "rejected"
@@ -422,6 +445,10 @@ def _day_state(
             status = "incomplete"
     elif leave is not None:
         status = "leave"
+    elif hourly_leaves and is_work and d <= today:
+        # Approved hourly leave without any attendance record: the day is excused.
+        status = "leave"
+        hourly_hours = round(sum(item.end_hour - item.start_hour for item in hourly_leaves), 2)
     elif not is_work:
         status = "non_working"
     elif d > today:
@@ -444,7 +471,58 @@ def _day_state(
         "pending_leave": pending_leave,
         "is_late": is_late,
         "left_early": left_early,
+        "hourly_leave_hours": round(hourly_hours, 2),
+        "late_minutes": late_minutes,
+        "overtime_minutes": overtime_minutes,
+        "absence_reason": absence_reason,
     }
+
+
+def record_metrics(rec: AttendanceRecord, sched, leaves=()) -> tuple[int, int]:
+    """(late minutes after the grace period, overtime minutes) for one record.
+
+    On a non-working day any time at the office counts as overtime.
+    An approved hourly leave at the start of the day pushes the late threshold
+    to the end of that leave (plus the usual grace), so arriving afterwards is
+    not late.
+    """
+    if rec.check_in_at is None:
+        return 0, 0
+    ci = as_utc(rec.check_in_at).astimezone(local_tz())
+    co = as_utc(rec.check_out_at).astimezone(local_tz()) if rec.check_out_at else None
+    work_day = is_work_day(sched, rec.work_date)
+    late = 0
+    if work_day:
+        shift_start = at_local(rec.work_date, sched.start_time)
+        grace_h = sched.late_grace_minutes / 60
+        threshold = shift_start.hour + shift_start.minute / 60 + grace_h
+        for item in sorted(leaves, key=lambda x: x.start_hour):
+            if item.start_hour <= threshold and item.end_hour > threshold:
+                threshold = item.end_hour + grace_h
+        ci_hour = ci.hour + ci.minute / 60
+        if ci_hour > threshold + 1e-9:
+            late = int(round((ci_hour - threshold) * 60))
+    if co is None:
+        return late, 0
+    if not work_day:
+        return late, max(0, int((co - ci).total_seconds() // 60))
+    shift_end = at_local(rec.work_date, sched.end_time)
+    overtime = max(0, int((co - shift_end).total_seconds() // 60))
+    return late, overtime
+
+
+def hourly_leave_hours_for_record(rec: AttendanceRecord, leaves: list) -> float:
+    """Hours of approved hourly leave that fall inside this record's presence."""
+    if not leaves or rec.check_out_at is None:
+        return 0.0
+    ci = as_utc(rec.check_in_at).astimezone(local_tz())
+    co = as_utc(rec.check_out_at).astimezone(local_tz())
+    ci_hour = ci.hour + ci.minute / 60
+    co_hour = co.hour + co.minute / 60
+    total = sum(
+        max(0.0, min(item.end_hour, co_hour) - max(item.start_hour, ci_hour)) for item in leaves
+    )
+    return round(total, 2)
 
 
 def day_states(
@@ -482,6 +560,26 @@ def day_states(
         )
     }
     leaves = approved_leaves_between(db, user_id, start, end)
+    hourly = list(
+        db.scalars(
+            select(HourlyLeaveRequest).where(
+                HourlyLeaveRequest.user_id == user_id,
+                HourlyLeaveRequest.status == STATUS_APPROVED,
+                HourlyLeaveRequest.date >= start,
+                HourlyLeaveRequest.date <= end,
+            )
+        )
+    )
+    absence_reasons = {
+        row.date: row.reason
+        for row in db.scalars(
+            select(AbsenceReason).where(
+                AbsenceReason.user_id == user_id,
+                AbsenceReason.date >= start,
+                AbsenceReason.date <= end,
+            )
+        )
+    }
     pending_leaves = list(
         db.scalars(
             select(LeaveRequest).where(
@@ -507,6 +605,8 @@ def day_states(
                 late_req=late_reqs.get(d),
                 leave=next((l for l in leaves if l.start_date <= d <= l.end_date), None),
                 pending_leave=_covers(pending_leaves, d) and d not in records,
+                hourly_leaves=[h for h in hourly if h.date == d],
+                absence_reason=absence_reasons.get(d),
                 today=today,
             )
         )
@@ -525,6 +625,8 @@ def totals_for_states(states: list[dict]) -> dict:
         "total_hours": 0.0,
         "late_count": 0,
         "early_leave_count": 0,
+        "late_minutes": 0,
+        "overtime_minutes": 0,
     }
     for s in states:
         st = s["status"]
@@ -540,7 +642,172 @@ def totals_for_states(states: list[dict]) -> dict:
             totals["late_count"] += 1
         if s["left_early"]:
             totals["early_leave_count"] += 1
+        totals["late_minutes"] += int(s.get("late_minutes") or 0)
+        totals["overtime_minutes"] += int(s.get("overtime_minutes") or 0)
     return totals
+
+
+def list_attendance(
+    db: Session,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    user_id: int | None = None,
+    branch_id: int | None = None,
+) -> list[AttendanceOut]:
+    """List attendance records with optional filters."""
+    from app.schemas import attendance_out
+    
+    query = select(AttendanceRecord)
+    if from_date is not None:
+        query = query.where(AttendanceRecord.work_date >= from_date)
+    if to_date is not None:
+        query = query.where(AttendanceRecord.work_date <= to_date)
+    if user_id is not None:
+        query = query.where(AttendanceRecord.user_id == user_id)
+    if branch_id is not None:
+        query = query.where(AttendanceRecord.branch_id == branch_id)
+    result = db.execute(query.order_by(AttendanceRecord.work_date.desc()))
+    records = result.scalars().all()
+    return [attendance_out(r) for r in records]
+
+
+def admin_manual_record(
+    db: Session,
+    *,
+    user_id: int,
+    branch_id: int,
+    work_date: date | None,
+    check_in: str,
+    check_out: str | None,
+    work_description: str | None,
+) -> AttendanceRecord:
+    """Admin manually registers (or updates) an employee's attendance for a day."""
+    from app.schemas import attendance_out
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    branch = db.get(Branch, branch_id)
+    if branch is None:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    day = work_date or local_date(utcnow())
+
+    from app.timeutil import at_local, parse_hhmm
+
+    ci_local = at_local(day, check_in)
+    co_local = at_local(day, check_out) if check_out else None
+    if co_local is not None and co_local <= ci_local:
+        raise HTTPException(status_code=422, detail="Check-out must be after check-in")
+
+    ci_utc = as_utc(ci_local)
+    co_utc = as_utc(co_local) if co_local else None
+
+    rec = _today_record(db, user, day)
+    if rec is not None:
+        # Update existing record
+        rec.branch_id = branch.id
+        rec.check_in_at = ci_utc
+        _mark_admin_edited(rec, "in")
+        if co_utc is not None:
+            rec.check_out_at = co_utc
+            rec.check_out_source = "admin"
+            _mark_admin_edited(rec, "out")
+        if work_description is not None:
+            rec.work_description = work_description.strip() or None
+        rec.edited_by_admin = True
+        rec.work_date = local_date(ci_utc)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Another record already exists for that day")
+        db.refresh(rec)
+        return rec
+
+    # Create new record (no GPS data for admin manual entry)
+    rec = AttendanceRecord(
+        user_id=user.id,
+        branch_id=branch.id,
+        work_date=day,
+        check_in_at=ci_utc,
+        check_in_lat=0.0,
+        check_in_lng=0.0,
+        check_in_accuracy_m=0.0,
+        check_in_distance_m=0.0,
+        check_out_at=co_utc,
+        check_out_lat=0.0 if co_utc else None,
+        check_out_lng=0.0 if co_utc else None,
+        check_out_accuracy_m=0.0 if co_utc else None,
+        check_out_distance_m=0.0 if co_utc else None,
+        check_out_source="admin" if co_utc else None,
+        work_description=(work_description.strip() if work_description else None),
+        edited_by_admin=True,
+        admin_edited_fields="in,out" if co_utc else "in",
+    )
+    db.add(rec)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Another record already exists for that day")
+    db.refresh(rec)
+    return rec
+
+
+def admin_dashboard(db: Session) -> "DashboardOut":
+    from sqlalchemy import func
+    from app.models import ROLE_EMPLOYEE, STATUS_APPROVED, STATUS_PENDING
+    from app.services.schedule import get_schedule, schedule_out
+    from app.schemas import DashboardOut
+
+    refresh_expired_late_requests(db)
+    today = local_date(utcnow())
+    active = db.scalar(
+        select(func.count()).select_from(User).where(
+            User.role == ROLE_EMPLOYEE, User.is_active.is_(True)
+        )
+    ) or 0
+    present = db.scalar(
+        select(func.count()).select_from(AttendanceRecord).where(AttendanceRecord.work_date == today)
+    ) or 0
+    open_now = db.scalar(
+        select(func.count()).select_from(AttendanceRecord).where(AttendanceRecord.check_out_at.is_(None))
+    ) or 0
+    leave_today = db.scalar(
+        select(func.count()).select_from(LeaveRequest).where(
+            LeaveRequest.status == STATUS_APPROVED,
+            LeaveRequest.start_date <= today,
+            LeaveRequest.end_date >= today,
+        )
+    ) or 0
+    pending_leaves = db.scalar(
+        select(func.count()).select_from(LeaveRequest).where(LeaveRequest.status == STATUS_PENDING)
+    ) or 0
+    pending_late = db.scalar(
+        select(func.count()).select_from(LateCheckoutRequest).where(
+            LateCheckoutRequest.status == STATUS_PENDING
+        )
+    ) or 0
+    rejected_today = db.scalar(
+        select(func.count()).select_from(AttendanceRecord).where(
+            AttendanceRecord.work_date == today,
+            AttendanceRecord.approval_status == "rejected",
+        )
+    ) or 0
+    sched = get_schedule(db)
+    return DashboardOut(
+        date=today.isoformat(),
+        active_employees=active,
+        present_today=present,
+        absent_today=max(active - present - leave_today, 0),
+        leave_today=leave_today,
+        rejected_today=rejected_today,
+        open_check_ins=open_now,
+        pending_leaves=pending_leaves,
+        pending_late_checkouts=pending_late,
+        schedule=schedule_out(sched),
+    )
 
 
 def admin_update_record(
@@ -557,9 +824,11 @@ def admin_update_record(
         rec.branch_id = branch_id
     if check_in_at is not None:
         rec.check_in_at = as_utc(check_in_at)
+        _mark_admin_edited(rec, "in")
     if check_out_at is not None:
         rec.check_out_at = as_utc(check_out_at)
         rec.check_out_source = "admin"
+        _mark_admin_edited(rec, "out")
 
     ci = as_utc(rec.check_in_at)
     co = as_utc(rec.check_out_at)
@@ -579,6 +848,72 @@ def admin_update_record(
 
 def default_history_range(today: date) -> tuple[date, date]:
     return today - timedelta(days=30), today
+
+
+# ---------- absence reasons (employee explains a missed working day) ----------
+
+
+def save_absence_reason(db: Session, user: User, day: date, reason: str):
+    """Creates or updates the employee's reason for being absent on one work day."""
+    from app.schemas import absence_reason_out
+
+    today = local_date(utcnow())
+    if day > today:
+        raise HTTPException(status_code=422, detail="Absence reason cannot be for a future day")
+    if day < today - timedelta(days=365):
+        raise HTTPException(status_code=422, detail="Absence reason is too far in the past")
+
+    sched = get_schedule(db)
+    if not is_work_day(sched, day):
+        raise HTTPException(status_code=422, detail="That day is not a working day")
+
+    rec = _today_record(db, user, day)
+    if rec is not None and rec.check_out_at is not None:
+        raise HTTPException(status_code=409, detail="This day already has recorded attendance")
+
+    approved_leave = db.scalar(
+        select(LeaveRequest).where(
+            LeaveRequest.user_id == user.id,
+            LeaveRequest.status == STATUS_APPROVED,
+            LeaveRequest.start_date <= day,
+            LeaveRequest.end_date >= day,
+        )
+    )
+    if approved_leave is not None:
+        raise HTTPException(status_code=409, detail="This day is covered by an approved leave")
+
+    row = db.scalar(
+        select(AbsenceReason).where(
+            AbsenceReason.user_id == user.id, AbsenceReason.date == day
+        )
+    )
+    if row is None:
+        row = AbsenceReason(user_id=user.id, date=day, reason=reason)
+        db.add(row)
+    else:
+        row.reason = reason
+        row.created_at = utcnow()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Absence reason already exists for that day")
+    db.refresh(row)
+    return absence_reason_out(row)
+
+
+def absence_reasons_between(
+    db: Session, user_id: int, start: date, end: date
+) -> list:
+    return list(
+        db.scalars(
+            select(AbsenceReason).where(
+                AbsenceReason.user_id == user_id,
+                AbsenceReason.date >= start,
+                AbsenceReason.date <= end,
+            )
+        )
+    )
 
 
 def current_week_start(today: date) -> date:

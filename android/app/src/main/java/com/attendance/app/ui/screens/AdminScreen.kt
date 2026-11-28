@@ -38,6 +38,7 @@ import com.attendance.app.data.AttendanceRecord
 import com.attendance.app.data.BranchOut
 import com.attendance.app.data.DashboardOut
 import com.attendance.app.data.EmployeeOut
+import com.attendance.app.data.HourlyLeaveOut
 import com.attendance.app.data.LateCheckoutOut
 import com.attendance.app.data.LeaveOut
 import com.attendance.app.ui.components.GlassCard
@@ -48,13 +49,14 @@ import com.attendance.app.ui.components.StatusTone
 import com.attendance.app.ui.theme.Palette
 import com.attendance.app.util.DateFmt
 
-private val SECTIONS = listOf("داشبورد", "مرخصی", "خروج", "حضور", "دفاتر", "کارمندان")
+private val SECTIONS = listOf("داشبورد", "مرخصی", "خروج", "حضور", "دفاتر", "کارمندان", "ساعتی")
 
 /** پنل مدیریت داخل اپ: داشبورد، درخواست‌ها، حضور، دفاتر و حساب کارمندان. */
 @Composable
 fun AdminScreen(
     dashboard: DashboardOut?,
     leaves: List<LeaveOut>,
+    hourlyLeaves: List<HourlyLeaveOut>,
     lateCheckouts: List<LateCheckoutOut>,
     records: List<AttendanceRecord>,
     branches: List<BranchOut>,
@@ -66,6 +68,8 @@ fun AdminScreen(
     onDecideLeave: (Int, String) -> Unit,
     onDecideLateCheckout: (Int, String) -> Unit,
     onDecideAttendance: (Int, String) -> Unit,
+    onDecideHourlyLeave: (Int, String) -> Unit,
+    onManualAttendance: (Int, Int, String, String, String?, String?) -> Unit,
     onCreateBranch: (String, String?, Double, Double, Double) -> Unit,
     onDeleteBranch: (Int) -> Unit,
     onCreateEmployee: (String, String, String, List<Int>) -> Unit,
@@ -76,10 +80,31 @@ fun AdminScreen(
     var section by rememberSaveable { mutableIntStateOf(0) }
     var showBranchDialog by rememberSaveable { mutableStateOf(false) }
     var showEmployeeDialog by rememberSaveable { mutableStateOf(false) }
+    var showManualDialog by rememberSaveable { mutableStateOf(false) }
     var deleteBranch by remember { mutableStateOf<BranchOut?>(null) }
     var deleteEmployee by remember { mutableStateOf<EmployeeOut?>(null) }
 
-    LaunchedEffect(section) { onLoad(section) }
+    LaunchedEffect(section) {
+        onLoad(section)
+        // The manual check-in dialog needs the employee and branch lists.
+        if (section == 3) {
+            onLoad(5)
+            onLoad(4)
+        }
+    }
+
+    if (showManualDialog) {
+        ManualAttendanceDialog(
+            employees = employees,
+            branches = branches,
+            busy = busy,
+            onDismiss = { showManualDialog = false },
+            onSubmit = { userId, branchId, date, checkIn, checkOut, description ->
+                onManualAttendance(userId, branchId, date, checkIn, checkOut, description)
+                showManualDialog = false
+            },
+        )
+    }
 
     if (showBranchDialog) {
         CreateBranchDialog(
@@ -254,6 +279,13 @@ fun AdminScreen(
         }
 
         if (section == 3) {
+            item {
+                GradientButton(
+                    text = "+ ثبت دستی ورود / خروج",
+                    enabled = !busy,
+                    onClick = { showManualDialog = true },
+                )
+            }
             if (records.isEmpty()) {
                 item { EmptyCard("رکوردی برای نمایش وجود ندارد.") }
             }
@@ -289,6 +321,35 @@ fun AdminScreen(
                             onReject = { onDecideAttendance(rec.id, "reject") },
                         )
                     }
+                }
+            }
+        }
+
+        if (section == 6) {
+            if (hourlyLeaves.isEmpty()) {
+                item { EmptyCard("درخواست مرخصی ساعتی در انتظار تایید وجود ندارد.") }
+            }
+            items(hourlyLeaves, key = { "admin-hourly-${it.id}" }) { leave ->
+                GlassCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(leave.user_full_name, style = MaterialTheme.typography.titleMedium, color = Palette.Indigo950)
+                        StatusPill(requestLabel(leave.status), requestTone(leave.status))
+                    }
+                    Text(
+                        "${DateFmt.jalaliDate(leave.date)} · ${hourLabel(leave.start_hour)} تا ${hourLabel(leave.end_hour)}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.TextMuted,
+                    )
+                    Text(leave.reason, style = MaterialTheme.typography.bodyMedium, color = Palette.Indigo950)
+                    DecisionRow(
+                        busy = busy,
+                        onApprove = { onDecideHourlyLeave(leave.id, "approve") },
+                        onReject = { onDecideHourlyLeave(leave.id, "reject") },
+                    )
                 }
             }
         }
@@ -435,6 +496,137 @@ private fun SectionChip(label: String, active: Boolean, onClick: () -> Unit) {
             color = if (active) Color.White else Palette.Purple800,
         )
     }
+}
+
+@Composable
+private fun ManualAttendanceDialog(
+    employees: List<EmployeeOut>,
+    branches: List<BranchOut>,
+    busy: Boolean,
+    onDismiss: () -> Unit,
+    onSubmit: (Int, Int, String, String, String?, String?) -> Unit,
+) {
+    var employeeId by remember { mutableStateOf<Int?>(null) }
+    var branchId by remember { mutableStateOf<Int?>(null) }
+    var dateText by rememberSaveable { mutableStateOf(DateFmt.todayJalali()) }
+    var checkIn by rememberSaveable { mutableStateOf("08:00") }
+    var checkOut by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // Suggest the selected employee's first branch.
+    LaunchedEffect(employeeId) {
+        val emp = employees.find { it.id == employeeId }
+        if (branchId == null) {
+            branchId = emp?.branch_ids?.firstOrNull() ?: branches.firstOrNull()?.id
+        }
+    }
+
+    val iso = DateFmt.jalaliTextToIso(dateText)
+    val timeOk = Regex("^([01]\\d|2[0-3]):[0-5]\\d$").matches(DateFmt.toAsciiDigits(checkIn).trim())
+    val outOk = checkOut.isBlank() || Regex("^([01]\\d|2[0-3]):[0-5]\\d$").matches(DateFmt.toAsciiDigits(checkOut).trim())
+    val valid = employeeId != null && branchId != null && iso != null && timeOk && outOk
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("ثبت دستی ورود / خروج") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "ثبت حضور کارمند توسط مدیر، بدون نیاز به موقعیت مکانی. اگر برای آن روز رکورد باشد به‌روزرسانی می‌شود.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Palette.TextMuted,
+                )
+                if (employees.isEmpty()) {
+                    Text(
+                        "ابتدا در بخش «کارمندان» حساب کارمند بسازید.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Palette.Rose600,
+                    )
+                } else {
+                    Text("کارمند", style = MaterialTheme.typography.labelLarge, color = Palette.Indigo950)
+                    employees.forEach { emp ->
+                        val selected = employeeId == emp.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) Palette.Purple100 else Color.White)
+                                .clickable { employeeId = emp.id }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(if (selected) "◉" else "○", color = Palette.Purple700)
+                            Text(emp.full_name, style = MaterialTheme.typography.bodyMedium, color = Palette.Indigo950)
+                        }
+                    }
+                }
+                if (branches.isNotEmpty()) {
+                    Text("دفتر", style = MaterialTheme.typography.labelLarge, color = Palette.Indigo950)
+                    branches.forEach { branch ->
+                        val selected = branchId == branch.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) Palette.Purple100 else Color.White)
+                                .clickable { branchId = branch.id }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(if (selected) "◉" else "○", color = Palette.Purple700)
+                            Text(branch.name, style = MaterialTheme.typography.bodyMedium, color = Palette.Indigo950)
+                        }
+                    }
+                }
+                GlassField(dateText, { dateText = it; error = null }, "تاریخ (شمسی)", ltr = true)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    GlassField(checkIn, { checkIn = it; error = null }, "ساعت ورود", ltr = true, modifier = Modifier.weight(1f))
+                    GlassField(checkOut, { checkOut = it; error = null }, "ساعت خروج (اختیاری)", ltr = true, modifier = Modifier.weight(1f))
+                }
+                GlassField(description, { description = it }, "شرح کار (اختیاری)")
+                if (iso == null) {
+                    Text("تاریخ را به شکل ۱۴۰۵/۰۸/۱۱ وارد کنید.", style = MaterialTheme.typography.labelSmall, color = Palette.Rose600)
+                } else if (!timeOk || !outOk) {
+                    Text("ساعت را به شکل ۰۸:۰۰ وارد کنید.", style = MaterialTheme.typography.labelSmall, color = Palette.Rose600)
+                }
+                error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Rose600) }
+                GradientButton(
+                    text = if (busy) "در حال ثبت…" else "ثبت حضور",
+                    enabled = valid && !busy,
+                    onClick = {
+                        val empId = employeeId
+                        val brId = branchId
+                        val day = iso
+                        if (empId == null) {
+                            error = "کارمند را انتخاب کنید."
+                        } else if (brId == null) {
+                            error = "دفتر را انتخاب کنید."
+                        } else if (day != null) {
+                            error = null
+                            onSubmit(
+                                empId,
+                                brId,
+                                day,
+                                DateFmt.toAsciiDigits(checkIn).trim(),
+                                checkOut.trim().ifBlank { null }?.let { DateFmt.toAsciiDigits(it).trim() },
+                                description.trim().ifBlank { null },
+                            )
+                        }
+                    },
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("انصراف", color = Palette.TextMuted) }
+        },
+    )
 }
 
 @Composable

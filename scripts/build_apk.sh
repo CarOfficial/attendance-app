@@ -26,6 +26,6 @@ cd "$ROOT/android"
   --init-script "$ROOT/.tools/android-build/mirror.init.gradle"
 
 APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
-VERSION="1.0.3"
+VERSION=$(sed -n 's/.*versionName = "\(.*\)"/\1/p' "$ROOT/android/app/build.gradle.kts" | head -1)
 cp "$APK" "$ROOT/dist/HozoorYar-$VERSION.apk"
 echo "built: $ROOT/dist/HozoorYar-$VERSION.apk (API_BASE_URL=$API_BASE_URL)"

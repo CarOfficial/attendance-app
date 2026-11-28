@@ -115,6 +115,21 @@ export interface LeaveIn {
 export type RequestStatus = "pending" | "approved" | "rejected";
 export type LateCheckoutStatus = RequestStatus | "expired";
 
+export interface HourlyLeaveOut {
+  id: number;
+  user_id: number;
+  user_full_name: string;
+  date: string;
+  start_hour: number;
+  end_hour: number;
+  reason: string;
+  status: RequestStatus;
+  created_at: string;
+  decided_at: string | null;
+  decided_by: number | null;
+  decision_note: string | null;
+}
+
 export interface LeaveOut {
   id: number;
   user_id: number;

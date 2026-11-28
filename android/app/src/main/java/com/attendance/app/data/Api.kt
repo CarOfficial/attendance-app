@@ -41,6 +41,16 @@ interface AttendanceApi {
     @GET("attendance/week")
     suspend fun week(@Query("start") start: String? = null): WeekOut
 
+    @GET("attendance/summary")
+    suspend fun summary(
+        @Query("from_date") fromDate: String,
+        @Query("to_date") toDate: String,
+    ): SummaryOut
+
+    /** The employee explains an absent day (shown to the manager in the panel). */
+    @POST("attendance/absence-reason")
+    suspend fun createAbsenceReason(@Body body: AbsenceReasonBody): AbsenceReasonOut
+
     @POST("attendance/late-checkout")
     suspend fun lateCheckout(@Body body: LateCheckoutIn): LateCheckoutOut
 
@@ -52,6 +62,12 @@ interface AttendanceApi {
 
     @GET("leaves/mine")
     suspend fun leavesMine(): List<LeaveOut>
+
+    @POST("leaves/hourly")
+    suspend fun createHourlyLeave(@Body body: HourlyLeaveBody): HourlyLeaveOut
+
+    @GET("leaves/hourly/mine")
+    suspend fun hourlyLeavesMine(): List<HourlyLeaveOut>
 
     // ---- Admin (contract §4) ----
 
@@ -73,6 +89,23 @@ interface AttendanceApi {
         @Path("id") id: Int,
         @Body body: DecisionIn,
     ): AttendanceDecisionOut
+
+    /** Admin records an employee's check-in/check-out manually (no GPS). */
+    @POST("admin/attendance/manual")
+    suspend fun adminManualAttendance(@Body body: ManualAttendanceBody): AttendanceRecord
+
+    @GET("admin/hourly-leaves")
+    suspend fun adminHourlyLeaves(
+        @Query("status") status: String? = null,
+        @Query("user_id") userId: Int? = null,
+        @Query("limit") limit: Int? = null,
+    ): List<HourlyLeaveOut>
+
+    @PATCH("admin/hourly-leaves/{id}")
+    suspend fun adminHourlyLeaveDecision(
+        @Path("id") id: Int,
+        @Body body: DecisionIn,
+    ): HourlyLeaveOut
 
     @GET("admin/leaves")
     suspend fun adminLeaves(

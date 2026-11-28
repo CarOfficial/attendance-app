@@ -170,6 +170,16 @@ class AttendanceAdminUpdate(BaseModel):
         return v
 
 
+class AttendanceManualIn(BaseModel):
+    """Admin manually registers an employee's check-in (and optional check-out)."""
+    user_id: int
+    branch_id: int
+    work_date: date | None = None
+    check_in: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    check_out: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    work_description: str | None = Field(default=None, max_length=1000)
+
+
 class AttendanceOut(BaseModel):
     id: int
     user_id: int
@@ -185,12 +195,38 @@ class AttendanceOut(BaseModel):
     approval_status: str
     approval_note: str | None
     hours_worked: float | None
+    # Minutes late vs. the schedule (after the grace period) and overtime beyond the shift.
+    late_minutes: int = 0
+    overtime_minutes: int = 0
+    # Approved hourly leave overlapping this record (already subtracted from hours_worked).
+    hourly_leave_hours: float = 0.0
+    # True when the manager recorded/changed that side of the record (used for highlighting).
+    check_in_edited: bool = False
+    check_out_edited: bool = False
 
 
-def attendance_out(rec: AttendanceRecord) -> AttendanceOut:
+def attendance_out(
+    rec: AttendanceRecord,
+    sched=None,
+    hourly_leave_hours: float = 0.0,
+    hourly_leaves=(),
+) -> AttendanceOut:
     ci = as_utc(rec.check_in_at)
     co = as_utc(rec.check_out_at)
     hours = round((co - ci).total_seconds() / 3600, 2) if co else None
+    if hours is not None and hourly_leave_hours:
+        hours = round(max(0.0, hours - hourly_leave_hours), 2)
+    late_minutes = 0
+    overtime_minutes = 0
+    if sched is not None:
+        from app.services.attendance import record_metrics
+
+        late_minutes, overtime_minutes = record_metrics(rec, sched, hourly_leaves)
+    # Only the side the manager actually touched is highlighted; legacy rows fall
+    # back to the old record-level flag.
+    edited = {f for f in (rec.admin_edited_fields or "").split(",") if f}
+    check_in_edited = ("in" in edited) if edited else rec.edited_by_admin
+    check_out_edited = ("out" in edited) if edited else rec.check_out_source == "admin"
     return AttendanceOut(
         id=rec.id,
         user_id=rec.user_id,
@@ -206,6 +242,11 @@ def attendance_out(rec: AttendanceRecord) -> AttendanceOut:
         approval_status=rec.approval_status,
         approval_note=rec.approval_note,
         hours_worked=hours,
+        late_minutes=late_minutes,
+        overtime_minutes=overtime_minutes,
+        hourly_leave_hours=hourly_leave_hours,
+        check_in_edited=check_in_edited,
+        check_out_edited=check_out_edited,
     )
 
 
@@ -253,6 +294,63 @@ def leave_out(leave) -> LeaveOut:
 class DecisionIn(BaseModel):
     decision: Literal["approve", "reject"]
     note: str | None = Field(default=None, max_length=255)
+
+
+class DecisionLeaveIn(BaseModel):
+    decision: Literal["approve", "reject"]
+    note: str | None = Field(default=None, max_length=255)
+
+class HourlyLeaveIn(BaseModel):
+    """Hourly leave for one day, e.g. 10:00 to 12:30 (start_hour/end_hour are decimal hours)."""
+
+    # Required only when an admin files the request for someone else.
+    user_id: int | None = None
+    date: date
+    start_hour: float = Field(ge=0, le=24)
+    end_hour: float = Field(ge=0, le=24)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("end_hour")
+    @classmethod
+    def _end_after_start(cls, v: float, info) -> float:
+        start = info.data.get("start_hour")
+        if start is not None and v <= start:
+            raise ValueError("end_hour must be after start_hour")
+        return v
+
+    model_config = {"from_attributes": True}
+
+class HourlyLeaveOut(BaseModel):
+    id: int
+    user_id: int
+    user_full_name: str
+    date: date
+    start_hour: float
+    end_hour: float
+    reason: str
+    status: str
+    created_at: datetime
+    decided_at: datetime | None
+    decided_by: int | None
+    decision_note: str | None
+
+    model_config = {"from_attributes": True}
+
+def hourly_leave_out(leave) -> HourlyLeaveOut:
+    return HourlyLeaveOut(
+        id=leave.id,
+        user_id=leave.user_id,
+        user_full_name=leave.user.full_name,
+        date=leave.date,
+        start_hour=leave.start_hour,
+        end_hour=leave.end_hour,
+        reason=leave.reason,
+        status=leave.status,
+        created_at=as_utc(leave.created_at),
+        decided_at=as_utc(leave.decided_at),
+        decided_by=leave.decided_by,
+        decision_note=leave.decision_note,
+    )
 
 
 # ---------- forgotten check-out ----------
@@ -356,12 +454,32 @@ class DayStateOut(BaseModel):
     pending_leave: bool
     is_late: bool
     left_early: bool
+    # Approved hourly leave on this day and the minutes of overtime / lateness.
+    hourly_leave_hours: float = 0.0
+    late_minutes: int = 0
+    overtime_minutes: int = 0
+    # The employee's explanation for an absent day, when they filed one.
+    absence_reason: str | None = None
 
 
 class WeekOut(BaseModel):
     start: date
     end: date
     days: list[DayStateOut]
+    schedule: ScheduleOut
+
+
+class DashboardOut(BaseModel):
+    date: str
+    active_employees: int = 0
+    present_today: int = 0
+    absent_today: int = 0
+    leave_today: int = 0
+    rejected_today: int = 0
+    open_check_ins: int = 0
+    pending_leaves: int = 0
+    pending_late_checkouts: int = 0
+    pending_hourly_leaves: int = 0
     schedule: ScheduleOut
 
 
@@ -372,3 +490,36 @@ class SummaryOut(BaseModel):
     to_date: date
     days: list[DayStateOut]
     totals: dict
+
+
+# ---------- absence reasons ----------
+
+class AbsenceReasonIn(BaseModel):
+    date: date
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _strip_reason(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 3:
+            raise ValueError("reason is too short")
+        return v
+
+
+class AbsenceReasonOut(BaseModel):
+    id: int
+    user_id: int
+    date: date
+    reason: str
+    created_at: datetime
+
+
+def absence_reason_out(row) -> AbsenceReasonOut:
+    return AbsenceReasonOut(
+        id=row.id,
+        user_id=row.user_id,
+        date=row.date,
+        reason=row.reason,
+        created_at=as_utc(row.created_at),
+    )

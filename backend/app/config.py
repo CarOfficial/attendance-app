@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     admin_bootstrap_username: str = "admin"
     admin_bootstrap_password: str | None = None
 
-    cors_origins: list[str] = []
+    cors_origins: list[str] = ["http://localhost", "http://127.0.0.1", "http://0.0.0.0"]
 
     @property
     def is_production(self) -> bool:

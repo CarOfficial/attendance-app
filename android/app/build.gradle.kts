@@ -13,8 +13,8 @@ android {
         applicationId = "com.attendance.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 7
+        versionName = "1.0.6"
     }
 
     buildTypes {
@@ -30,8 +30,8 @@ android {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Set this to the HTTPS domain that serves the API before building a release.
-            buildConfigField("String", "API_BASE_URL", "\"https://YOUR-DOMAIN.example/api/v1/\"")
+            // Production API (https://att.aists.ir).
+            buildConfigField("String", "API_BASE_URL", "\"https://att.aists.ir/api/v1/\"")
         }
     }
 

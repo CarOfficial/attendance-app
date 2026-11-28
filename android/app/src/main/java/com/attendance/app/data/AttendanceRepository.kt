@@ -54,6 +54,12 @@ class AttendanceRepository(private val tokens: TokenStore) {
 
     suspend fun week(start: String? = null): WeekOut = api.week(start)
 
+    suspend fun mySummary(fromDate: String, toDate: String): SummaryOut =
+        api.summary(fromDate, toDate)
+
+    suspend fun submitAbsenceReason(date: String, reason: String): AbsenceReasonOut =
+        api.createAbsenceReason(AbsenceReasonBody(date, reason))
+
     suspend fun lateCheckout(
         workDate: String,
         checkOutTime: String,
@@ -77,12 +83,41 @@ class AttendanceRepository(private val tokens: TokenStore) {
 
     suspend fun myLeaves(): List<LeaveOut> = api.leavesMine()
 
+    suspend fun createHourlyLeave(date: String, startHour: Double, endHour: Double, reason: String): HourlyLeaveOut =
+        api.createHourlyLeave(HourlyLeaveBody(date = date, start_hour = startHour, end_hour = endHour, reason = reason))
+
+    suspend fun myHourlyLeaves(): List<HourlyLeaveOut> = api.hourlyLeavesMine()
+
     // ---- Admin (contract §4) ----
 
     suspend fun adminDashboard(): DashboardOut = api.adminDashboard()
 
     suspend fun adminAttendance(limit: Int? = null): List<AttendanceRecord> =
         api.adminAttendance(limit = limit)
+
+    suspend fun adminManualAttendance(
+        userId: Int,
+        branchId: Int,
+        workDate: String,
+        checkIn: String,
+        checkOut: String?,
+        description: String?,
+    ): AttendanceRecord = api.adminManualAttendance(
+        ManualAttendanceBody(
+            user_id = userId,
+            branch_id = branchId,
+            work_date = workDate,
+            check_in = checkIn,
+            check_out = checkOut,
+            work_description = description,
+        ),
+    )
+
+    suspend fun adminHourlyLeaves(status: String? = null, limit: Int? = null): List<HourlyLeaveOut> =
+        api.adminHourlyLeaves(status, limit = limit)
+
+    suspend fun decideHourlyLeave(id: Int, decision: String, note: String?): HourlyLeaveOut =
+        api.adminHourlyLeaveDecision(id, DecisionIn(decision, note))
 
     suspend fun decideAttendance(id: Int, decision: String, note: String?): AttendanceDecisionOut =
         api.adminAttendanceDecision(id, DecisionIn(decision, note))

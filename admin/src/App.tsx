@@ -9,6 +9,7 @@ import { AttendancePage } from "./pages/Attendance";
 import { EmployeesPage } from "./pages/Employees";
 import { BranchesPage } from "./pages/Branches";
 import { LeavesPage } from "./pages/Leaves";
+import { HourlyLeavesPage } from "./pages/HourlyLeaves";
 import { LateCheckoutsPage } from "./pages/LateCheckouts";
 import { SchedulePage } from "./pages/Schedule";
 import { ReportsPage } from "./pages/Reports";
@@ -48,6 +49,7 @@ export default function App() {
           <Route index element={<DashboardPage />} />
           <Route path="attendance" element={<AttendancePage />} />
           <Route path="leaves" element={<LeavesPage />} />
+          <Route path="hourly-leaves" element={<HourlyLeavesPage />} />
           <Route path="late-checkouts" element={<LateCheckoutsPage />} />
           <Route path="schedule" element={<SchedulePage />} />
           <Route path="reports" element={<ReportsPage />} />

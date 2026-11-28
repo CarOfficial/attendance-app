@@ -6,6 +6,7 @@ const nav = [
   { to: "/", label: "داشبورد", icon: "◐" },
   { to: "/attendance", label: "حضور و غیاب", icon: "◷" },
   { to: "/leaves", label: "مرخصی‌ها", icon: "☾" },
+  { to: "/hourly-leaves", label: "مرخصی ساعتی", icon: "⏱" },
   { to: "/late-checkouts", label: "خروج فراموش‌شده", icon: "⇦" },
   { to: "/schedule", label: "برنامه کاری", icon: "▦" },
   { to: "/reports", label: "گزارش و ساعات کاری", icon: "▤" },

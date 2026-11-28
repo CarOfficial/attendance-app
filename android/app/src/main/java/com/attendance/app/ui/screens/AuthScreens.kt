@@ -181,7 +181,7 @@ private fun ServerSelector(
         GlassField(
             newServer,
             { newServer = it },
-            "آدرس سرور جدید (مثلاً 192.168.1.13:8000)",
+            "آدرس سرور جدید (مثلاً 192.168.1.10:8000)",
             ltr = true,
         )
         Row(

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api, downloadExcel, getSummary } from "../api";
 import { Alert, Badge, Button, Card, Empty, Field, Select, Stat, Table } from "../components/ui";
 import { JalaliDateField } from "../components/JalaliDateField";
-import { addDaysIso, formatHours, formatJalaliDate, formatTime, todayIso } from "../jalali";
+import { addDaysIso, formatHours, formatJalaliDate, formatMinutes, formatTime, todayIso } from "../jalali";
 import { APPROVAL_STATUS, DAY_STATUS, weekdayName } from "../status";
 import type { Employee, SummaryOut } from "../types";
 
@@ -138,7 +138,7 @@ export function ReportsPage() {
       {error && <Alert>{error}</Alert>}
 
       {t && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 xl:grid-cols-7">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="حاضر" value={t.present} tone="green" />
           <Stat label="غایب" value={t.absent} tone="rose" />
           <Stat label="مرخصی" value={t.leave} tone="amber" />
@@ -146,6 +146,7 @@ export function ReportsPage() {
           <Stat label="مجموع ساعت کاری" value={formatHours(Number(t.total_hours))} tone="slate" />
           <Stat label="تعداد تاخیر" value={t.late_count} tone="rose" />
           <Stat label="خروج زودتر" value={t.early_leave_count} tone="amber" />
+          <Stat label="مجموع اضافه‌کاری" value={formatMinutes(t.overtime_minutes)} tone="green" />
         </div>
       )}
 
@@ -157,7 +158,7 @@ export function ReportsPage() {
         ) : (
           <Table head={[
             "تاریخ شمسی", "روز", "وضعیت", "ورود", "خروج", "ساعت کاری",
-            "تاخیر", "خروج زودتر", "شرح کار", "وضعیت تایید",
+            "تاخیر", "اضافه‌کاری", "خروج زودتر", "شرح کار / علت غیاب", "وضعیت تایید",
           ]}>
             {summary.days.map((d) => {
               const st = DAY_STATUS[d.status];
@@ -174,15 +175,35 @@ export function ReportsPage() {
                   <td className="whitespace-nowrap px-4 py-3 tabular-nums">{formatTime(d.check_out_at)}</td>
                   <td className="whitespace-nowrap px-4 py-3 tabular-nums font-medium text-slate-800">
                     {formatHours(d.hours_worked)}
+                    {d.hourly_leave_hours > 0 && (
+                      <span className="block text-[11px] font-normal text-amber-700">
+                        {formatHours(d.hourly_leave_hours)} مرخصی ساعتی
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
-                    {d.is_late ? <Badge tone="rose">تاخیر</Badge> : <span className="text-slate-400">—</span>}
+                    {d.late_minutes > 0 ? (
+                      <Badge tone="rose">{formatMinutes(d.late_minutes)}</Badge>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {d.overtime_minutes > 0 ? (
+                      <Badge tone="green">{formatMinutes(d.overtime_minutes)}</Badge>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {d.left_early ? <Badge tone="amber">زودتر</Badge> : <span className="text-slate-400">—</span>}
                   </td>
                   <td className="max-w-44 px-4 py-3 text-slate-600" title={d.work_description ?? undefined}>
-                    <span className="line-clamp-2">{d.work_description || "—"}</span>
+                    {d.absence_reason ? (
+                      <span className="text-rose-700">علت غیاب: {d.absence_reason}</span>
+                    ) : (
+                      <span className="line-clamp-2">{d.work_description || "—"}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <Badge tone={ap.tone}>{ap.label}</Badge>

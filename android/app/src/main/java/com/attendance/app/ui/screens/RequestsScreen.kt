@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import com.attendance.app.data.HourlyLeaveOut
 import com.attendance.app.data.LateCheckoutOut
 import com.attendance.app.data.LeaveOut
 import com.attendance.app.ui.components.GlassCard
@@ -37,12 +38,14 @@ import com.attendance.app.util.DateFmt
 @Composable
 fun RequestsScreen(
     leaves: List<LeaveOut>,
+    hourlyLeaves: List<HourlyLeaveOut>,
     lateCheckouts: List<LateCheckoutOut>,
     fixReady: Boolean,
     busy: Boolean,
     notice: String?,
     noticeIsError: Boolean,
     onSubmitLeave: (String, String, String) -> Unit,
+    onSubmitHourlyLeave: (String, Double, Double, String) -> Unit,
     onFetchLocation: () -> Unit,
     onSubmitLateCheckout: (String, String, String) -> Unit,
     modifier: Modifier = Modifier,
@@ -65,6 +68,36 @@ fun RequestsScreen(
 
         item {
             LeaveForm(busy = busy, onSubmit = onSubmitLeave)
+        }
+
+        item {
+            HourlyLeaveForm(busy = busy, onSubmit = onSubmitHourlyLeave)
+        }
+
+        if (hourlyLeaves.isNotEmpty()) {
+            item {
+                Text("مرخصی‌های ساعتی من", style = MaterialTheme.typography.titleMedium, color = Palette.Indigo950)
+            }
+            items(hourlyLeaves, key = { "hourly-${it.id}" }) { leave ->
+                GlassCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${DateFmt.jalaliDate(leave.date)} · ${hourLabel(leave.start_hour)} تا ${hourLabel(leave.end_hour)}",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Palette.Indigo950,
+                        )
+                        StatusPill(requestLabel(leave.status), requestTone(leave.status))
+                    }
+                    Text(leave.reason, style = MaterialTheme.typography.bodyMedium, color = Palette.Indigo950)
+                    leave.decision_note?.let {
+                        Text("یادداشت مدیر: $it", style = MaterialTheme.typography.labelSmall, color = Palette.TextMuted)
+                    }
+                }
+            }
         }
 
         if (leaves.isNotEmpty()) {
@@ -184,6 +217,71 @@ private fun LeaveForm(busy: Boolean, onSubmit: (String, String, String) -> Unit)
             },
         )
     }
+}
+
+@Composable
+private fun HourlyLeaveForm(busy: Boolean, onSubmit: (String, Double, Double, String) -> Unit) {
+    var dateText by rememberSaveable { mutableStateOf(DateFmt.todayJalali()) }
+    var fromText by rememberSaveable { mutableStateOf("10:00") }
+    var toText by rememberSaveable { mutableStateOf("12:00") }
+    var reason by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val iso = DateFmt.jalaliTextToIso(dateText)
+    val from = hourValue(fromText)
+    val to = hourValue(toText)
+    val canSubmit = !busy && iso != null && from != null && to != null && from < to && reason.trim().length >= 3
+
+    GlassCard {
+        Text("درخواست مرخصی ساعتی", style = MaterialTheme.typography.titleMedium, color = Palette.Indigo950)
+        Text(
+            "مرخصی چندساعته در یک روز؛ پس از تایید مدیر اعمال می‌شود. تاریخ را شمسی وارد کنید.",
+            style = MaterialTheme.typography.labelSmall,
+            color = Palette.TextMuted,
+        )
+        GlassField(dateText, { dateText = it; error = null }, "تاریخ", ltr = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            GlassField(fromText, { fromText = it; error = null }, "از ساعت", ltr = true, modifier = Modifier.weight(1f))
+            GlassField(toText, { toText = it; error = null }, "تا ساعت", ltr = true, modifier = Modifier.weight(1f))
+        }
+        if (iso == null) {
+            Text("تاریخ را به شکل ۱۴۰۵/۰۸/۱۱ وارد کنید.", style = MaterialTheme.typography.labelSmall, color = Palette.Rose600)
+        } else if (from == null || to == null) {
+            Text("ساعت را به شکل ۱۰:۳۰ وارد کنید.", style = MaterialTheme.typography.labelSmall, color = Palette.Rose600)
+        } else if (from >= to) {
+            Text("ساعت پایان باید بعد از ساعت شروع باشد.", style = MaterialTheme.typography.labelSmall, color = Palette.Rose600)
+        }
+        MultilineField(reason, { reason = it; error = null }, "دلیل مرخصی ساعتی", 2)
+        error?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = Palette.Rose600) }
+        GradientButton(
+            text = if (busy) "در حال ارسال…" else "ارسال درخواست مرخصی ساعتی",
+            enabled = canSubmit,
+            onClick = {
+                if (reason.trim().length < 3) {
+                    error = "دلیل مرخصی را کامل بنویسید."
+                } else if (iso != null && from != null && to != null && from < to) {
+                    error = null
+                    onSubmit(iso, from, to, reason.trim())
+                    reason = ""
+                }
+            },
+        )
+    }
+}
+
+/** "10:30" -> 10.5 ; null when the text is not HH:MM. */
+internal fun hourValue(text: String): Double? {
+    val clean = DateFmt.toAsciiDigits(text).trim()
+    val match = Regex("^([01]?\\d|2[0-3]):[0-5]\\d$").matchEntire(clean) ?: return null
+    val parts = match.value.split(":")
+    return parts[0].toInt() + parts[1].toInt() / 60.0
+}
+
+/** 10.5 -> «۱۰:۳۰» */
+internal fun hourLabel(hour: Double): String {
+    val h = hour.toInt()
+    val m = ((hour - h) * 60).toInt()
+    return DateFmt.fa(String.format("%02d:%02d", h, m))
 }
 
 @Composable
